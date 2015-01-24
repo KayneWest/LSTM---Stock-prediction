@@ -130,12 +130,12 @@ def param_init_lstm(options, params, prefix='lstm'):
                            ortho_weight(options['dim_proj']),
                            ortho_weight(options['dim_proj']),
                            ortho_weight(options['dim_proj'])], axis=1)
-    params[_p(prefix, 'W')] = W
+    params[_p(prefix, 'W')] = W.astype('float32')
     U = numpy.concatenate([ortho_weight(options['dim_proj']),
                            ortho_weight(options['dim_proj']),
                            ortho_weight(options['dim_proj']),
                            ortho_weight(options['dim_proj'])], axis=1)
-    params[_p(prefix, 'U')] = U
+    params[_p(prefix, 'U')] = U.astype('float32')
     b = numpy.zeros((4 * options['dim_proj'],))
     params[_p(prefix, 'b')] = b.astype('float32')
 
@@ -319,6 +319,8 @@ def build_model(tparams, options):
     #emb = theano.function(inputs=[x, n_timesteps],outputs=result,updates=updates)
 
     emb = tensor.dot(x,tparams['Wemb'])
+    if options['use_dropout']:
+        emb = dropout_layer(emb, use_noise, trng)
 
     proj = get_layer(options['encoder'])[1](tparams, emb, options,
                                             prefix=options['encoder']
@@ -332,8 +334,9 @@ def build_model(tparams, options):
     #    proj = dropout_layer(proj, use_noise, trng)
 
     #pred = tensor.nnet.softmax(tensor.dot(proj, tparams['U'])+tparams['b'])
-    pred = tensor.nnet.sigmoid(tensor.dot(proj, tparams['U'])\
-            + tparams['b'])
+    #pred = tensor.nnet.sigmoid(tensor.dot(proj, tparams['U'])\
+    #        + tparams['b'])
+    pred = tensor.dot(proj, tparams['U']) + tparams['b']
 
     f_pred_prob = theano.function([x], pred, name='f_pred_prob')
     #f_pred = theano.function(x, pred.argmax(axis=1), name='f_pred')
@@ -384,8 +387,9 @@ def pred_error(f_pred, prepare_data, data, iterator, model_options, verbose=Fals
 
         preds = f_pred(x)
         targets = numpy.array(data[1])[valid_index]
-        valid_err += tensor.mean((targets-preds.T)**2)
+        valid_err += tensor.sum((targets-preds.T)**2)
     #valid_err = 1. - numpy.float32(valid_err) / len(data[0])
+    valid_err = valid_err / len(data[0])    
 
     return valid_err.eval()
 
@@ -393,7 +397,7 @@ def pred_error(f_pred, prepare_data, data, iterator, model_options, verbose=Fals
 def train_lstm(
     dim_proj=128,  # word embeding dimension and LSTM number of hidden units.
     patience=10,  # Number of epoch to wait before early stop if no progress
-    max_epochs=5000,  # The maximum number of epoch to run
+    max_epochs=300,  # The maximum number of epoch to run
     dispFreq=10,  # Display to stdout the training progress every N updates
     decay_c=0.,  # Weight decay for the classifier applied to the U weights.
     lrate=0.0001,  # Learning rate for sgd (not used for adadelta and rmsprop)
@@ -401,7 +405,7 @@ def train_lstm(
     optimizer=adadelta,  # sgd, adadelta and rmsprop available, sgd very hard to use, not recommanded (probably need momentum and decaying learning rate).
     encoder='lstm',  # TODO: can be removed must be lstm.
     saveto='lstm_model.npz',  # The best model will be saved there
-    validFreq=370,  # Compute the validation error after this number of update.
+    validFreq=170,  # Compute the validation error after this number of update.
     saveFreq=1110,  # Save the parameters after every saveFreq updates
     maxlen=100,  # Sequence longer then this get ignored
     batch_size=16,  # The batch size during training.
@@ -576,9 +580,9 @@ def train_lstm(
         best_p = unzip(tparams)
 
     use_noise.set_value(0.)
-    train_err = pred_error(f_pred, prepare_data, train, kf, model_options)
-    valid_err = pred_error(f_pred, prepare_data, valid, kf_validi, model_options)
-    test_err = pred_error(f_pred, prepare_data, test, kf_test, model_options)
+    train_err = pred_error(f_pred_prob, prepare_data, train, kf, model_options)
+    valid_err = pred_error(f_pred_prob, prepare_data, valid, kf_validi, model_options)
+    test_err = pred_error(f_pred_prob, prepare_data, test, kf_test, model_options)
 
     print 'Train ', train_err, 'Valid ', valid_err, 'Test ', test_err
 
@@ -602,6 +606,6 @@ if __name__ == '__main__':
     # See function train for all possible parameter and there definition.
     train_lstm(
         #reload_model="lstm_model.npz",
-        max_epochs=100,
+        max_epochs=300,
     )
 
