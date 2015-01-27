@@ -394,10 +394,38 @@ def pred_error(f_pred, prepare_data, data, iterator, model_options, verbose=Fals
     return valid_err.eval()
 
 
+def R_score(f_pred, prepare_data, data, iterator, model_options, verbose=False):
+    """
+    Just compute the error
+    f_pred: Theano fct computing the prediction
+    prepare_data: usual prepare_data for that dataset.
+    """
+    valid_err = 0
+    denom = 0
+    data_mean = numpy.array(data[1]).mean()
+    for _, valid_index in iterator:
+        # TODO: This is not very efficient I should check
+        x,  y = prepare_data([data[0][t] for t in valid_index],
+                                  numpy.array(data[1])[valid_index],
+                                  model_options['n_iter'],model_options['n_input'])
+
+
+        preds = f_pred(x)
+        targets = numpy.array(data[1])[valid_index]
+        valid_err += tensor.sum((targets-preds.T)**2)
+        denom += ((numpy.array(data[1]) - data_mean)**2).sum()
+    #valid_err = 1. - numpy.float32(valid_err) / len(data[0])
+    valid_err = 1. - (valid_err / denom) 
+
+    return valid_err.eval()
+
+
+
+
 def train_lstm(
-    dim_proj=128,  # word embeding dimension and LSTM number of hidden units.
+    dim_proj=32,  # word embeding dimension and LSTM number of hidden units.
     patience=10,  # Number of epoch to wait before early stop if no progress
-    max_epochs=300,  # The maximum number of epoch to run
+    max_epochs=150,  # The maximum number of epoch to run
     dispFreq=10,  # Display to stdout the training progress every N updates
     decay_c=0.,  # Weight decay for the classifier applied to the U weights.
     lrate=0.0001,  # Learning rate for sgd (not used for adadelta and rmsprop)
@@ -543,6 +571,7 @@ def train_lstm(
                     train_err = pred_error(f_pred_prob, prepare_data, train, kf, model_options)
                     valid_err = pred_error(f_pred_prob, prepare_data, valid, kf_valid, model_options)
                     test_err = pred_error(f_pred_prob, prepare_data, test, kf_test, model_options)
+                    r_score = R_score(f_pred_prob, prepare_data, test, kf_test, model_options)
 
                     history_errs.append([valid_err, test_err])
 
@@ -554,7 +583,7 @@ def train_lstm(
                         bad_counter = 0
 
                     print ('Train ', train_err, 'Valid ', valid_err,
-                           'Test ', test_err)
+                           'Test ', test_err, 'R_score ', r_score)
 
                     if (len(history_errs) > patience and
                         valid_err >= numpy.array(history_errs)[:-patience,
@@ -581,7 +610,7 @@ def train_lstm(
 
     use_noise.set_value(0.)
     train_err = pred_error(f_pred_prob, prepare_data, train, kf, model_options)
-    valid_err = pred_error(f_pred_prob, prepare_data, valid, kf_validi, model_options)
+    valid_err = pred_error(f_pred_prob, prepare_data, valid, kf_valid, model_options)
     test_err = pred_error(f_pred_prob, prepare_data, test, kf_test, model_options)
 
     print 'Train ', train_err, 'Valid ', valid_err, 'Test ', test_err

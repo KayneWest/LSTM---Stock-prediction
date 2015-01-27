@@ -3,29 +3,35 @@ import pdb
 import sys
 
 import numpy
-from matplotlib import pyplot
 
 import theano
 from numpy import genfromtxt
 from pandas import Series
 
 import sklearn.cross_validation as cv
+from sklearn import preprocessing
 
 def data_preprocessing(data):
     data = data[350:,:]
     # Standarization
+    
     data = data - data.mean(axis=0)
     data = data/data.std(axis=0)
     #Some kind of smoothing??
 
+    #min_max = preprocessing.MinMaxScaler()
+    #data = min_max.fit_transform(data)
+
+    #Put between 1 and 0
     return data 
 
 def read_data(path="table_a.csv", dir="/user/j/jgpavez/lstmTimeSerie/data/",
-        max_len=30, valid_portion=0.1 ):
+        max_len=30, valid_portion=0.1, columns=4 ):
     path = os.path.join(dir, path)
 
     data = genfromtxt(path, delimiter=',')
-    data = data[:,2:-1]
+
+    data = data[:,2:(2+columns)]
 
     data = data_preprocessing(data)
 
