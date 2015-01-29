@@ -13,6 +13,7 @@ import numpy
 import theano
 import theano.tensor as tensor
 from theano.sandbox.rng_mrg import MRG_RandomStreams as RandomStreams
+from theano.ifelse import ifelse
 
 
 from quant import read_data, prepare_data
@@ -195,6 +196,47 @@ def lstm_layer(tparams, state_below, options, prefix='lstm', mask=None):
 #     before the classifier.
 layers = {'lstm': (param_init_lstm, lstm_layer)}
 
+def mom_sgd(lr, tparams, grads, x, y, cost):
+    """ Stochastic Gradient Descent
+
+    :note: A more complicated version of sgd then needed.  This is
+        done like that for adadelta and rmsprop.
+
+    """
+
+    updates = OrderedDict()
+
+    mom = tensor.scalar(name='mom')
+    gmomshared = [theano.shared(p.get_value(), name='%s_mom_grad' %k)
+        for k,p in tparams.iteritems()]
+
+    # New set of shared variable that will contain the gradient
+    # for a mini-batch.
+    gshared = [theano.shared(p.get_value() * 0., name='%s_grad' % k)
+               for k, p in tparams.iteritems()]
+    gsup = [(gs, g) for gs, g in zip(gshared, grads)]
+
+    # Function that computes gradients for a mini-batch, but do not
+    # updates the weights.
+    f_grad_shared = theano.function([x, y], cost, updates=gsup,
+                                    name='sgd_f_grad_shared')
+
+    for gm,gp in zip(gmomshared,gshared):
+        updates[gm] = mom*gm - (1.0 - mom) * lr * gp
+    #gmomup = [(gm, mom*gm - (1.0 - mom) * lr * gp) for gm,gp in
+    #    zip(gmomshared, gshared)]
+    
+    #pup = [(p, p + gm) for p, gm in zip(tparams.values(), gmomup)]
+    for p,gm in zip(tparams.values(), gmomshared):
+        updates[p] = p + updates[gm]
+
+    # Function that updates the weights from the previously computed
+    # gradient.
+    f_update = theano.function([lr,mom], [], updates=updates,
+                               name='sgd_f_update')
+
+    return f_grad_shared, f_update
+
 
 def sgd(lr, tparams, grads, x, y, cost):
     """ Stochastic Gradient Descent
@@ -327,9 +369,11 @@ def build_model(tparams, options):
                                             )
     
 
-    if options['encoder'] == 'lstm':
+    if options['encoder'] == 'lstm' and options['sum_pool'] == True:
         proj = proj.sum(axis=0)
         proj = proj / options['n_iter'] 
+    else:
+        proj = proj[-1]
     #if options['use_dropout']:
     #    proj = dropout_layer(proj, use_noise, trng)
 
@@ -430,7 +474,7 @@ def train_lstm(
     decay_c=0.,  # Weight decay for the classifier applied to the U weights.
     lrate=0.0001,  # Learning rate for sgd (not used for adadelta and rmsprop)
     n_input = 4,  # Vocabulary size
-    optimizer=adadelta,  # sgd, adadelta and rmsprop available, sgd very hard to use, not recommanded (probably need momentum and decaying learning rate).
+    optimizer=mom_sgd,  # sgd,mom_sgs, adadelta and rmsprop available, sgd very hard to use, not recommanded (probably need momentum and decaying learning rate).
     encoder='lstm',  # TODO: can be removed must be lstm.
     saveto='lstm_model.npz',  # The best model will be saved there
     validFreq=170,  # Compute the validation error after this number of update.
@@ -445,6 +489,11 @@ def train_lstm(
     use_dropout=False,  # if False slightly faster, but worst test error
                        # This frequently need a bigger model.
     reload_model="",  # Path to a saved model we want to start from.
+    sum_pool = False,
+    mom_start = 0.5,
+    mom_end = 0.99,
+    mom_epoch_interval = 100
+
 ):
 
     # Model options
@@ -452,12 +501,13 @@ def train_lstm(
     print "model options", model_options
 
     print 'Loading data'
-    train, valid, test = read_data()
+    ydim = 1
+    n_iter = 10
+
+    train, valid, test = read_data(max_len=n_iter)
 
     #YDIM??
     #number of labels (output)
-    ydim = 1
-    n_iter = 30
 
     model_options['ydim'] = ydim
     model_options['n_iter'] = n_iter
@@ -520,6 +570,7 @@ def train_lstm(
     uidx = 0  # the number of update done
     estop = False  # early stop
     start_time = time.clock()
+    mom = 0
 
     try:
         for eidx in xrange(max_epochs):
@@ -544,9 +595,15 @@ def train_lstm(
                     print 'Minibatch with zero sample under length ', maxlen
                     continue
                 n_samples += x.shape[1]
+                if eidx < model_options['mom_epoch_interval']:
+                    mom = model_options['mom_start']*\
+                    (1.0 - eidx/model_options['mom_epoch_interval'])\
+                      + mom_end*(eidx/model_options['mom_epoch_interval'])
+                else:
+                    mom = mom_end
 
                 cost = f_grad_shared(x, y)
-                f_update(lrate)
+                f_update(lrate,mom)
 
                 if numpy.isnan(cost) or numpy.isinf(cost):
                     print 'NaN detected'
@@ -568,7 +625,7 @@ def train_lstm(
 
                 if numpy.mod(uidx, validFreq) == 0:
                     use_noise.set_value(0.)
-                    train_err = pred_error(f_pred_prob, prepare_data, train, kf, model_options)
+                    #train_err = pred_error(f_pred_prob, prepare_data, train, kf, model_options)
                     valid_err = pred_error(f_pred_prob, prepare_data, valid, kf_valid, model_options)
                     test_err = pred_error(f_pred_prob, prepare_data, test, kf_test, model_options)
                     r_score = R_score(f_pred_prob, prepare_data, test, kf_test, model_options)
@@ -582,7 +639,7 @@ def train_lstm(
                         best_p = unzip(tparams)
                         bad_counter = 0
 
-                    print ('Train ', train_err, 'Valid ', valid_err,
+                    print ('Valid ', valid_err,
                            'Test ', test_err, 'R_score ', r_score)
 
                     if (len(history_errs) > patience and
@@ -612,8 +669,9 @@ def train_lstm(
     train_err = pred_error(f_pred_prob, prepare_data, train, kf, model_options)
     valid_err = pred_error(f_pred_prob, prepare_data, valid, kf_valid, model_options)
     test_err = pred_error(f_pred_prob, prepare_data, test, kf_test, model_options)
+    r_score = R_score(f_pred_prob, prepare_data, test, kf_test, model_options)
 
-    print 'Train ', train_err, 'Valid ', valid_err, 'Test ', test_err
+    print 'Train ', train_err, 'Valid ', valid_err, 'Test ', test_err, 'R2 score ', r_score
 
     numpy.savez(saveto, train_err=train_err,
                 valid_err=valid_err, test_err=test_err,
@@ -635,6 +693,6 @@ if __name__ == '__main__':
     # See function train for all possible parameter and there definition.
     train_lstm(
         #reload_model="lstm_model.npz",
-        max_epochs=300,
+        max_epochs=150,
     )
 
