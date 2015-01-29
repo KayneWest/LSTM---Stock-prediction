@@ -472,7 +472,7 @@ def train_lstm(
     max_epochs=150,  # The maximum number of epoch to run
     dispFreq=10,  # Display to stdout the training progress every N updates
     decay_c=0.,  # Weight decay for the classifier applied to the U weights.
-    lrate=0.0001,  # Learning rate for sgd (not used for adadelta and rmsprop)
+    lrate=0.1,  # Learning rate for sgd (not used for adadelta and rmsprop)
     n_input = 4,  # Vocabulary size
     optimizer=mom_sgd,  # sgd,mom_sgs, adadelta and rmsprop available, sgd very hard to use, not recommanded (probably need momentum and decaying learning rate).
     encoder='lstm',  # TODO: can be removed must be lstm.
@@ -492,7 +492,8 @@ def train_lstm(
     sum_pool = False,
     mom_start = 0.5,
     mom_end = 0.99,
-    mom_epoch_interval = 100
+    mom_epoch_interval = 100,
+    learning_rate_decay=0.9995
 
 ):
 
@@ -604,6 +605,9 @@ def train_lstm(
 
                 cost = f_grad_shared(x, y)
                 f_update(lrate,mom)
+
+                #decay
+                lrate = learning_rate_decay*lrate
 
                 if numpy.isnan(cost) or numpy.isinf(cost):
                     print 'NaN detected'
