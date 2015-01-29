@@ -1,5 +1,6 @@
 '''
-Build a tweet sentiment analyzer
+LSTM RNN for stock predictions
+Based on sentiment analysis lstm found in deeplearning tutorials
 '''
 from collections import OrderedDict
 import copy
@@ -348,17 +349,6 @@ def build_model(tparams, options):
     n_timesteps = x.shape[0]
     n_samples = x.shape[1]
     n_dim = x.shape[2]
-
-    #emb = tensor.zeros([n_timesteps, n_samples, options['dim_proj']]).astype('float32')
-
-    #for id in xrange(options['n_iter']):
-    #emb = tensor.dot(x,tparams['Wemb'])
-
-    #result, updates = theano.scan(fn=lambda x_,w_: tensor.dot(x_,w_),
-    #                            sequences=x,
-    #                            non_sequences=tparams['Wemb'],
-    #                            n_steps=n_timesteps)
-    #emb = theano.function(inputs=[x, n_timesteps],outputs=result,updates=updates)
 
     emb = tensor.dot(x,tparams['Wemb'])
     if options['use_dropout']:
